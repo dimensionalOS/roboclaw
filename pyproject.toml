@@ -3,9 +3,9 @@ name = "openclaw_dimos"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.11,<3.14"
 
-dependencies = ["dimos[base,unitree]>=0.0.9"]
+dependencies = ["dimos[base,unitree,sim]>=0.0.10.post1"]
 
 [tool.uv.sources]
 dimos = { git = "https://github.com/dimensionalOS/dimos/", branch = "dev" }
