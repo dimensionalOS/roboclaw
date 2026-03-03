@@ -4,13 +4,6 @@ An [OpenClaw](https://openclaw.ai/) plugin that bridges [DimOS](https://github.c
 
 The plugin connects to the DimOS MCP server over HTTP, discovers all available robot skills (movement, navigation, perception, spatial memory), and registers them as OpenClaw agent tools.
 
-## Prerequisites
-
-- [Node.js](https://nodejs.org/) (v22+)
-- [pnpm](https://pnpm.io/) (`npm install -g pnpm`)
-- [uv](https://docs.astral.sh/uv/) (Python package manager)
-- DimOS source (with Unitree Go2 support)
-
 ## Setup
 
 ### 1. Configure environment
@@ -25,13 +18,7 @@ Edit `.env` and set:
 - `ANTHROPIC_API_KEY` — used by the OpenClaw agent
 - `OPENAI_API_KEY` — used by the DimOS agent
 - `OPENCLAW_GATEWAY_TOKEN` — shared token for gateway auth (e.g. `test123`)
-- `ROBOT_IP` — your Unitree Go2's IP address
-
-### 2. Install dependencies
-
-```bash
-pnpm install
-```
+- `ROBOT_IP` — your Unitree Go2's IP address (if testing on hardware)
 
 ### 3. Install and enable the plugin
 
@@ -79,10 +66,3 @@ Or use the interactive TUI:
 ```bash
 pnpm openclaw tui
 ```
-
-## Plugin configuration
-
-The plugin accepts optional config under `plugins.entries.dimos.config`:
-
-- `mcpHost` — DimOS MCP server host (default: `127.0.0.1`)
-- `mcpPort` — DimOS MCP server port (default: `9990`)
