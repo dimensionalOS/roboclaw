@@ -1,5 +1,4 @@
 import { execFileSync } from "node:child_process";
-import net from "node:net";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool } from "openclaw/agents/tools/common.js";
@@ -26,6 +25,45 @@ function getPort(pluginConfig?: Record<string, unknown>): number {
     return pluginConfig.mcpPort;
   }
   return DEFAULT_PORT;
+}
+
+function mcpUrl(host: string, port: number): string {
+  return `http://${host}:${port}/mcp`;
+}
+
+/** Send a JSON-RPC request to the DimOS MCP HTTP server. */
+async function rpc(
+  url: string,
+  method: string,
+  params?: Record<string, unknown>,
+  timeoutMs: number = CALL_TIMEOUT_MS,
+): Promise<unknown> {
+  const body = {
+    jsonrpc: "2.0",
+    id: 1,
+    method,
+    ...(params ? { params } : {}),
+  };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    }
+    const json = (await res.json()) as { result?: unknown; error?: { message: string } };
+    if (json.error) {
+      throw new Error(json.error.message);
+    }
+    return json.result;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Convert a JSON Schema properties object into a TypeBox Type.Object schema. */
@@ -69,32 +107,37 @@ function jsonSchemaToTypebox(
 }
 
 /**
- * Discover MCP tools synchronously by connecting directly to the DimOS TCP server.
+ * Discover MCP tools synchronously by sending HTTP requests to the DimOS MCP server.
  * Uses a child process so we can block the main thread during plugin registration.
  */
 function discoverToolsSync(host: string, port: number): McpToolDef[] {
+  const url = mcpUrl(host, port);
   const script = `
-const net = require('net');
-const client = net.createConnection(${port}, ${JSON.stringify(host)}, () => {
-  client.write(JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'openclaw-dimos',version:'0.0.1'}}})+'\\n');
-});
-let buf='';
-client.on('data',d=>{
-  buf+=d.toString();
-  const lines=buf.split('\\n');
-  buf=lines.pop()||'';
-  for(const line of lines){
-    if(!line.trim())continue;
-    const msg=JSON.parse(line);
-    if(msg.id===1){
-      client.write(JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/list',params:{}})+'\\n');
-    }else if(msg.id===2){
-      process.stdout.write(JSON.stringify(msg.result.tools));
-      client.end();
-    }
-  }
-});
-client.on('error',e=>{process.stderr.write(e.message);process.exit(1);});
+const http = require('http');
+function post(body) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const req = http.request(${JSON.stringify(url)}, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+    }, (res) => {
+      let buf = '';
+      res.on('data', d => buf += d);
+      res.on('end', () => {
+        if (res.statusCode !== 200) { reject(new Error('HTTP ' + res.statusCode + ': ' + buf)); return; }
+        resolve(JSON.parse(buf));
+      });
+    });
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
+(async () => {
+  await post({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'openclaw-dimos',version:'0.0.1'}}});
+  const res = await post({jsonrpc:'2.0',id:2,method:'tools/list',params:{}});
+  process.stdout.write(JSON.stringify(res.result.tools));
+})().catch(e => { process.stderr.write(e.message); process.exit(1); });
 `;
   const result = execFileSync("node", ["-e", script], {
     timeout: 10_000,
@@ -103,79 +146,27 @@ client.on('error',e=>{process.stderr.write(e.message);process.exit(1);});
   return JSON.parse(result);
 }
 
-/** Call an MCP tool via direct TCP connection to the DimOS server. */
+/** Call an MCP tool via HTTP POST to the DimOS server. */
 async function callTool(
   host: string,
   port: number,
   name: string,
   args: Record<string, unknown>,
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const client = net.createConnection(port, host, () => {
-      client.write(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "initialize",
-          params: {
-            protocolVersion: "2024-11-05",
-            capabilities: {},
-            clientInfo: { name: "openclaw-dimos", version: "0.0.1" },
-          },
-        }) + "\n",
-      );
-    });
-
-    let buf = "";
-    let phase: "init" | "call" | "done" = "init";
-
-    const timer = setTimeout(() => {
-      client.destroy();
-      reject(new Error("MCP tool call timed out"));
-    }, CALL_TIMEOUT_MS);
-
-    client.on("data", (d) => {
-      buf += d.toString();
-      const lines = buf.split("\n");
-      buf = lines.pop() || "";
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const msg = JSON.parse(line);
-        if (phase === "init" && msg.id === 1) {
-          phase = "call";
-          client.write(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: 2,
-              method: "tools/call",
-              params: { name, arguments: args },
-            }) + "\n",
-          );
-        } else if (phase === "call" && msg.id === 2) {
-          phase = "done";
-          clearTimeout(timer);
-          if (msg.error) {
-            resolve(`Error: ${msg.error.message}`);
-          } else {
-            const content = msg.result?.content;
-            const text = Array.isArray(content)
-              ? content
-                  .filter((c: { type: string }) => c.type === "text")
-                  .map((c: { text: string }) => c.text)
-                  .join("\n")
-              : JSON.stringify(content);
-            resolve(text || "OK");
-          }
-          client.end();
-        }
-      }
-    });
-
-    client.on("error", (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-  });
+  const url = mcpUrl(host, port);
+  const result = (await rpc(url, "tools/call", { name, arguments: args })) as {
+    content?: Array<{ type: string; text?: string }>;
+  };
+  const content = result?.content;
+  if (Array.isArray(content)) {
+    return (
+      content
+        .filter((c) => c.type === "text")
+        .map((c) => c.text)
+        .join("\n") || "OK"
+    );
+  }
+  return JSON.stringify(content) || "OK";
 }
 
 export default {
@@ -187,8 +178,6 @@ export default {
     const host = getHost(api.pluginConfig);
     const port = getPort(api.pluginConfig);
 
-    // Discover tools synchronously so they're available immediately —
-    // no dependency on the service lifecycle (which the CLI agent path skips).
     let mcpTools: McpToolDef[];
     try {
       mcpTools = discoverToolsSync(host, port);
@@ -198,7 +187,6 @@ export default {
       return;
     }
 
-    // Register each tool with a proper name so OpenClaw's tool system tracks them.
     for (const mcpTool of mcpTools) {
       const parameters = jsonSchemaToTypebox(mcpTool.inputSchema);
       const tool: AnyAgentTool = {
