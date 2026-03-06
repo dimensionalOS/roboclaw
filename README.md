@@ -7,7 +7,7 @@ uv sync
 ```
 
 ```bash
-uv run dimos run unitree-go2-agentic-mcp
+uv run dimos --viewer-backend rerun run unitree-go2-agentic-mcp
 ```
 
 In another terminal, run the following commands:
