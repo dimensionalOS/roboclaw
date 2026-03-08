@@ -7,6 +7,8 @@ import type { AnyAgentTool } from "openclaw/agents/tools/common.js";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 9990;
 const CALL_TIMEOUT_MS = 30_000;
+const DISCOVERY_MAX_RETRIES = 3;
+const DISCOVERY_RETRY_DELAY_MS = 2_000;
 
 interface McpToolDef {
   name: string;
@@ -187,14 +189,23 @@ export default {
     const host = getHost(api.pluginConfig);
     const port = getPort(api.pluginConfig);
 
-    // Discover tools synchronously so they're available immediately —
-    // no dependency on the service lifecycle (which the CLI agent path skips).
-    let mcpTools: McpToolDef[];
-    try {
-      mcpTools = discoverToolsSync(host, port);
-      api.logger.info(`dimos: discovered ${mcpTools.length} tool(s) from ${host}:${port}`);
-    } catch (err) {
-      api.logger.error(`dimos: failed to discover tools from ${host}:${port}: ${err}`);
+    let mcpTools: McpToolDef[] | null = null;
+    for (let attempt = 1; attempt <= DISCOVERY_MAX_RETRIES; attempt++) {
+      try {
+        mcpTools = discoverToolsSync(host, port);
+        api.logger.info(`dimos: discovered ${mcpTools.length} tool(s) from ${host}:${port}`);
+        break;
+      } catch (err) {
+        api.logger.error(
+          `dimos: discovery attempt ${attempt}/${DISCOVERY_MAX_RETRIES} failed for ${host}:${port}: ${err}`,
+        );
+        if (attempt < DISCOVERY_MAX_RETRIES) {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, DISCOVERY_RETRY_DELAY_MS);
+        }
+      }
+    }
+    if (!mcpTools) {
+      api.logger.error(`dimos: all ${DISCOVERY_MAX_RETRIES} discovery attempts failed, plugin not loaded`);
       return;
     }
 
