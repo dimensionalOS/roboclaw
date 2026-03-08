@@ -85,7 +85,7 @@ client.on('data',d=>{
   buf=lines.pop()||'';
   for(const line of lines){
     if(!line.trim())continue;
-    const msg=JSON.parse(line);
+    let msg;try{msg=JSON.parse(line);}catch{continue;}
     if(msg.id===1){
       client.write(JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/list',params:{}})+'\\n');
     }else if(msg.id===2){
@@ -100,7 +100,11 @@ client.on('error',e=>{process.stderr.write(e.message);process.exit(1);});
     timeout: 10_000,
     encoding: "utf-8",
   });
-  return JSON.parse(result);
+  try {
+    return JSON.parse(result);
+  } catch {
+    throw new Error(`Failed to parse MCP tool discovery response: ${result.slice(0, 200)}`);
+  }
 }
 
 /** Call an MCP tool via direct TCP connection to the DimOS server. */
@@ -140,7 +144,12 @@ async function callTool(
       buf = lines.pop() || "";
       for (const line of lines) {
         if (!line.trim()) continue;
-        const msg = JSON.parse(line);
+        let msg: { id?: number; result?: { content?: unknown }; error?: { message: string } };
+        try {
+          msg = JSON.parse(line);
+        } catch {
+          continue; // skip malformed JSON lines
+        }
         if (phase === "init" && msg.id === 1) {
           phase = "call";
           client.write(
