@@ -14,14 +14,14 @@ interface McpToolDef {
   inputSchema: Record<string, unknown>;
 }
 
-function getHost(pluginConfig?: Record<string, unknown>): string {
+export function getHost(pluginConfig?: Record<string, unknown>): string {
   if (pluginConfig && typeof pluginConfig.mcpHost === "string" && pluginConfig.mcpHost) {
     return pluginConfig.mcpHost;
   }
   return DEFAULT_HOST;
 }
 
-function getPort(pluginConfig?: Record<string, unknown>): number {
+export function getPort(pluginConfig?: Record<string, unknown>): number {
   if (pluginConfig && typeof pluginConfig.mcpPort === "number") {
     return pluginConfig.mcpPort;
   }
@@ -29,7 +29,7 @@ function getPort(pluginConfig?: Record<string, unknown>): number {
 }
 
 /** Convert a JSON Schema properties object into a TypeBox Type.Object schema. */
-function jsonSchemaToTypebox(
+export function jsonSchemaToTypebox(
   inputSchema?: Record<string, unknown>,
 ): ReturnType<typeof Type.Object> {
   if (!inputSchema) {
