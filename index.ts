@@ -75,7 +75,9 @@ function jsonSchemaToTypebox(
 function discoverToolsSync(host: string, port: number): McpToolDef[] {
   const script = `
 const net = require('net');
-const client = net.createConnection(${port}, ${JSON.stringify(host)}, () => {
+const host = process.env.MCP_HOST;
+const port = parseInt(process.env.MCP_PORT, 10);
+const client = net.createConnection(port, host, () => {
   client.write(JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'openclaw-dimos',version:'0.0.1'}}})+'\\n');
 });
 let buf='';
@@ -85,7 +87,7 @@ client.on('data',d=>{
   buf=lines.pop()||'';
   for(const line of lines){
     if(!line.trim())continue;
-    const msg=JSON.parse(line);
+    let msg;try{msg=JSON.parse(line);}catch{continue;}
     if(msg.id===1){
       client.write(JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/list',params:{}})+'\\n');
     }else if(msg.id===2){
@@ -99,6 +101,7 @@ client.on('error',e=>{process.stderr.write(e.message);process.exit(1);});
   const result = execFileSync("node", ["-e", script], {
     timeout: 10_000,
     encoding: "utf-8",
+    env: { ...process.env, MCP_HOST: host, MCP_PORT: String(port) },
   });
   return JSON.parse(result);
 }
