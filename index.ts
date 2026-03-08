@@ -28,6 +28,38 @@ function getPort(pluginConfig?: Record<string, unknown>): number {
   return DEFAULT_PORT;
 }
 
+/** Convert a single JSON Schema property to its TypeBox equivalent. */
+function jsonSchemaPropToTypebox(prop: Record<string, unknown>): unknown {
+  const desc = typeof prop.description === "string" ? prop.description : undefined;
+
+  if (Array.isArray(prop.enum) && prop.enum.length > 0) {
+    const literals = prop.enum.map((v: unknown) => Type.Literal(v as string | number | boolean));
+    return literals.length === 1 ? literals[0] : Type.Union(literals, { description: desc });
+  }
+
+  switch (prop.type) {
+    case "number":
+    case "integer":
+      return Type.Number({ description: desc });
+    case "boolean":
+      return Type.Boolean({ description: desc });
+    case "array": {
+      const items = prop.items as Record<string, unknown> | undefined;
+      const itemSchema = items ? jsonSchemaPropToTypebox(items) : Type.Unknown();
+      // @ts-expect-error -- dynamic schema
+      return Type.Array(itemSchema, { description: desc });
+    }
+    case "object": {
+      if (prop.properties) {
+        return jsonSchemaToTypebox(prop as Record<string, unknown>);
+      }
+      return Type.Record(Type.String(), Type.Unknown(), { description: desc });
+    }
+    default:
+      return Type.String({ description: desc });
+  }
+}
+
 /** Convert a JSON Schema properties object into a TypeBox Type.Object schema. */
 function jsonSchemaToTypebox(
   inputSchema?: Record<string, unknown>,
@@ -41,27 +73,8 @@ function jsonSchemaToTypebox(
   const tbProps: Record<string, unknown> = {};
 
   for (const [key, prop] of Object.entries(properties)) {
-    const desc = typeof prop.description === "string" ? prop.description : undefined;
-    let inner;
-    switch (prop.type) {
-      case "number":
-      case "integer":
-        inner = Type.Number({ description: desc });
-        break;
-      case "boolean":
-        inner = Type.Boolean({ description: desc });
-        break;
-      case "array":
-        inner = Type.Array(Type.Unknown(), { description: desc });
-        break;
-      case "object":
-        inner = Type.Record(Type.String(), Type.Unknown(), { description: desc });
-        break;
-      default:
-        inner = Type.String({ description: desc });
-        break;
-    }
-    tbProps[key] = required.has(key) ? inner : Type.Optional(inner);
+    const inner = jsonSchemaPropToTypebox(prop);
+    tbProps[key] = required.has(key) ? inner : Type.Optional(inner as ReturnType<typeof Type.String>);
   }
 
   // @ts-expect-error -- heterogeneous property map built dynamically
